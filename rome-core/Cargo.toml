@@ -1,0 +1,16 @@
+[package]
+name = "rome-core"
+version = "0.2.0"
+edition = "2021"
+description = "Shared device protocol, disk format, flashing, and encode/upload pipeline for rome"
+
+[lib]
+name = "rome_core"
+path = "src/lib.rs"
+
+[dependencies]
+serialport = "4"
+rusb = { version = "0.9", features = ["vendored"] }
+anyhow = "1"
+symphonia = { version = "0.5", features = ["flac", "wav", "mp3", "pcm", "ogg"] }
+indicatif = "0.17"

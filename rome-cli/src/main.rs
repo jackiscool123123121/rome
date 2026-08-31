@@ -1,13 +1,9 @@
-mod adpcm;
-mod disk;
-mod flash;
-mod proto;
-
 use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
+use rome_core::{adpcm, disk, flash};
 
 // ── CLI ───────────────────────────────────────────────────────────────────────
 
@@ -153,117 +149,9 @@ enum SongCmd {
     },
 }
 
-// ── Audio loading ─────────────────────────────────────────────────────────────
-
-use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::DecoderOptions;
-use symphonia::core::errors::Error as SymphoniaError;
-use symphonia::core::formats::FormatOptions;
-use symphonia::core::io::MediaSourceStream;
-use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::Hint;
-
-/// Linear interpolation resample from src_rate to 48000 Hz.
-fn resample_to_48k(samples: &[i16], src_rate: u32) -> Vec<i16> {
-    const DST_RATE: u32 = 48000;
-    if src_rate == DST_RATE { return samples.to_vec(); }
-    let ratio = DST_RATE as f64 / src_rate as f64;
-    let dst_len = (samples.len() as f64 * ratio).ceil() as usize;
-    let mut out = Vec::with_capacity(dst_len);
-    for i in 0..dst_len {
-        let src_pos = i as f64 / ratio;
-        let idx = src_pos as usize;
-        let frac = src_pos - idx as f64;
-        let s0 = samples.get(idx).copied().unwrap_or(0) as f64;
-        let s1 = samples.get(idx + 1).copied().unwrap_or(0) as f64;
-        let v = (s0 + frac * (s1 - s0)).round() as i32;
-        out.push(v.clamp(-32768, 32767) as i16);
-    }
-    out
-}
-
-/// Load any audio file (WAV, FLAC, MP3, OGG…) and return (left, right) at 48 kHz.
-/// Mono files are duplicated to stereo. Multi-channel files use ch 0 + ch 1.
-fn load_audio_stereo(path: &PathBuf) -> Result<(Vec<i16>, Vec<i16>)> {
-    let file = std::fs::File::open(path)
-        .with_context(|| format!("cannot open {}", path.display()))?;
-    let mss = MediaSourceStream::new(Box::new(file), Default::default());
-
-    let mut hint = Hint::new();
-    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-        hint.with_extension(ext);
-    }
-
-    let probed = symphonia::default::get_probe()
-        .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
-        .with_context(|| format!("cannot probe {}", path.display()))?;
-
-    let mut format = probed.format;
-    let track = format.default_track()
-        .ok_or_else(|| anyhow::anyhow!("{}: no audio track", path.display()))?;
-
-    let sample_rate = track.codec_params.sample_rate
-        .ok_or_else(|| anyhow::anyhow!("{}: unknown sample rate", path.display()))?;
-    let n_channels = track.codec_params.channels
-        .map(|c| c.count())
-        .unwrap_or(2);
-    let track_id = track.id;
-
-    let mut decoder = symphonia::default::get_codecs()
-        .make(&track.codec_params, &DecoderOptions::default())
-        .with_context(|| format!("{}: unsupported codec", path.display()))?;
-
-    let mut left_raw: Vec<i16> = Vec::new();
-    let mut right_raw: Vec<i16> = Vec::new();
-
-    loop {
-        let packet = match format.next_packet() {
-            Ok(p) => p,
-            Err(SymphoniaError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-            Err(SymphoniaError::ResetRequired) => continue,
-            Err(e) => return Err(e).context("decode error"),
-        };
-        if packet.track_id() != track_id { continue; }
-
-        let decoded = match decoder.decode(&packet) {
-            Ok(d) => d,
-            Err(SymphoniaError::IoError(_)) => break,
-            Err(SymphoniaError::DecodeError(_)) => continue,
-            Err(e) => return Err(e).context("decode error"),
-        };
-
-        let spec = *decoded.spec();
-        let mut buf: SampleBuffer<i16> = SampleBuffer::new(decoded.capacity() as u64, spec);
-        buf.copy_interleaved_ref(decoded);
-        let samples = buf.samples();
-
-        let ch = n_channels.max(1);
-        for frame in samples.chunks(ch) {
-            left_raw.push(frame[0]);
-            right_raw.push(if ch >= 2 { frame[1] } else { frame[0] });
-        }
-    }
-
-    if left_raw.is_empty() {
-        bail!("{}: decoded no samples", path.display());
-    }
-
-    if sample_rate != 48000 {
-        eprintln!("    resampling {} Hz → 48000 Hz", sample_rate);
-    }
-    let left  = resample_to_48k(&left_raw, sample_rate);
-    let right = resample_to_48k(&right_raw, sample_rate);
-    Ok((left, right))
-}
-
-// ── Device helpers ────────────────────────────────────────────────────────────
-
-fn open_dev(port: Option<&str>) -> Result<proto::DeviceConn> {
-    match port {
-        Some(p) => proto::DeviceConn::open(p),
-        None    => proto::DeviceConn::open_auto(),
-    }
-}
+// ── Audio loading + device connect now live in rome-core (shared with the
+// GUI): rome_core::load_audio_stereo, rome_core::resample_to_48k,
+// rome_core::open_dev. ─────────────────────────────────────────────────────
 
 fn progress_bar(total_blocks: u64) -> ProgressBar {
     let pb = ProgressBar::new(total_blocks * 512);
@@ -286,7 +174,7 @@ fn progress_bar(total_blocks: u64) -> ProgressBar {
 // ── Commands ──────────────────────────────────────────────────────────────────
 
 fn cmd_info(port: Option<&str>) -> Result<()> {
-    let mut dev = open_dev(port)?;
+    let mut dev = rome_core::open_dev(port)?;
     dev.ping().context("ping failed")?;
 
     let raw = dev.disk_info()?;
@@ -335,7 +223,7 @@ fn cmd_format(port: Option<&str>, confirmed: bool) -> Result<()> {
             bail!("aborted");
         }
     }
-    let mut dev = open_dev(port)?;
+    let mut dev = rome_core::open_dev(port)?;
     dev.ping().context("ping failed")?;
     dev.disk_format()?;
     eprintln!("rome: disk formatted");
@@ -352,78 +240,44 @@ fn cmd_song_add(
     }
 
     eprintln!("rome: loading stems...");
-    let mut channel_pcm: [Vec<i16>; adpcm::CHANNELS] = std::array::from_fn(|_| Vec::new());
-
-    for (stem_idx, path) in stems.iter().enumerate() {
-        let (left, right) = load_audio_stereo(path)?;
-        let n = left.len();
-        // Pad all channels to same length
-        let target = channel_pcm[0].len().max(n);
-        for ch in channel_pcm.iter_mut() {
-            ch.resize(target, 0);
+    let stem_paths: [&std::path::Path; 4] = std::array::from_fn(|i| stems[i].as_path());
+    let song = rome_core::encode_song(stem_paths)?;
+    for (i, note) in song.stems.iter().enumerate() {
+        if let Some(src_rate) = note.resampled_from {
+            eprintln!("    resampling {src_rate} Hz → 48000 Hz");
         }
-        let ch_l = stem_idx * 2;
-        let ch_r = stem_idx * 2 + 1;
-        channel_pcm[ch_l] = left;
-        channel_pcm[ch_l].resize(target, 0);
-        channel_pcm[ch_r] = right;
-        channel_pcm[ch_r].resize(target, 0);
-        eprintln!("  stem {}: {} ({} frames)", stem_idx + 1, path.display(), n);
+        eprintln!("  stem {}: {} ({} frames)", i + 1, note.path.display(), note.frames);
     }
 
-    // Pad all channels to the same length
-    let max_len = channel_pcm.iter().map(|c| c.len()).max().unwrap_or(0);
-    for ch in channel_pcm.iter_mut() {
-        ch.resize(max_len, 0);
-    }
-
-    eprintln!("rome: encoding {} frames → 8ch IMA-ADPCM...", max_len);
-    let blocks = adpcm::encode_8ch(&channel_pcm);
-    let secs = max_len as f64 / 48000.0;
+    eprintln!("rome: encoding {} frames → 8ch IMA-ADPCM...", song.frames);
+    let secs = song.frames as f64 / 48000.0;
     eprintln!("rome: {} blocks, {:.0}m{:.0}s, {:.1} MB",
-        blocks.len(), (secs / 60.0).floor(), secs % 60.0,
-        blocks.len() as f64 * 512.0 / 1_048_576.0);
+        song.blocks.len(), (secs / 60.0).floor(), secs % 60.0,
+        song.blocks.len() as f64 * 512.0 / 1_048_576.0);
+    eprintln!("rome: baked {} per-stem VU bytes → {} level blocks",
+        song.level_blocks.len() * 512, song.level_blocks.len());
 
-    // Bake decimated per-stem VU levels (4 bytes/decim), appended after audio.
-    let levels = adpcm::bake_stem_levels(&blocks);
-    let level_blocks = adpcm::pack_levels(&levels);
-    eprintln!("rome: baked {} per-stem VU bytes → {} level blocks", levels.len(), level_blocks.len());
-    let mut stream: Vec<[u8; 512]> = Vec::with_capacity(blocks.len() + level_blocks.len());
-    stream.extend_from_slice(&blocks);
-    stream.extend_from_slice(&level_blocks);
+    let mut dev = rome_core::open_dev(port)?;
 
-    let mut dev = open_dev(port)?;
-    dev.ping().context("ping failed")?;
-
-    let mut name_bytes = [0u8; 24];
-    let nb = name.as_bytes();
-    name_bytes[..nb.len().min(23)].copy_from_slice(&nb[..nb.len().min(23)]);
-
-    eprintln!("rome: uploading \"{}\" ({} blocks)...", name, blocks.len());
-    let song_idx = dev.song_begin(&name_bytes, blocks.len() as u32, level_blocks.len() as u32)?;
-
-    const BATCH: usize = 96;
-    let pb = progress_bar(stream.len() as u64);
-    let mut sent = 0usize;
-    for chunk in stream.chunks(BATCH) {
-        if let Err(e) = dev.song_multiblock(chunk) {
-            pb.finish_and_clear();
-            eprintln!("rome: FAILED after {} blocks ok; failing batch = blocks [{}..{}]",
-                      sent, sent, sent + chunk.len());
-            return Err(e);
-        }
-        sent += chunk.len();
-        pb.inc(chunk.len() as u64 * 512);
-    }
+    eprintln!("rome: uploading \"{}\" ({} blocks)...", name, song.blocks.len());
+    let total = (song.blocks.len() + song.level_blocks.len()) as u64;
+    let pb = progress_bar(total);
+    let result = rome_core::upload_encoded_song(&mut dev, name, &song, |p| {
+        pb.set_position(p.blocks_sent as u64 * 512);
+    });
     pb.finish_and_clear();
 
-    dev.song_commit()?;
-    eprintln!("rome: upload complete — catalog index {song_idx}");
-    Ok(())
+    match result {
+        Ok(song_idx) => {
+            eprintln!("rome: upload complete — catalog index {song_idx}");
+            Ok(())
+        }
+        Err(e) => Err(e),
+    }
 }
 
 fn cmd_song_rm(port: Option<&str>, idx: u16) -> Result<()> {
-    let mut dev = open_dev(port)?;
+    let mut dev = rome_core::open_dev(port)?;
     dev.ping().context("ping failed")?;
     dev.song_remove(idx)?;
     eprintln!("rome: removed song {idx}");
@@ -435,7 +289,7 @@ fn cmd_song_list(port: Option<&str>) -> Result<()> {
 }
 
 fn cmd_codec(port: Option<&str>) -> Result<()> {
-    let mut dev = open_dev(port)?;
+    let mut dev = rome_core::open_dev(port)?;
     dev.ping().context("ping failed")?;
     let d = dev.codec_diag()?;
 
@@ -499,7 +353,7 @@ fn cmd_codec(port: Option<&str>) -> Result<()> {
 }
 
 fn cmd_audio(port: Option<&str>, count: u32) -> Result<()> {
-    let mut dev = open_dev(port)?;
+    let mut dev = rome_core::open_dev(port)?;
     dev.ping().context("ping failed")?;
     println!("{:>10} {:>11} {:>11} {:>11} {:>10} {:>10} {:>10} {:>8} {:>8}",
         "recover", "write_fail", "max_rd_us", "last_rd_us", "cur_blk", "blks_fed", "crc_err", "ain0", "ain1");
@@ -516,7 +370,7 @@ fn cmd_audio(port: Option<&str>, count: u32) -> Result<()> {
 }
 
 fn cmd_extcsd(port: Option<&str>) -> Result<()> {
-    let mut dev = open_dev(port)?;
+    let mut dev = rome_core::open_dev(port)?;
     dev.ping().context("ping failed")?;
     let e = dev.extcsd_dump()?;
 
@@ -578,7 +432,7 @@ fn main() -> Result<()> {
 }
 
 fn cmd_bootloader(port: Option<&str>) -> Result<()> {
-    let mut dev = open_dev(port)?;
+    let mut dev = rome_core::open_dev(port)?;
     dev.ping().context("ping failed")?;
     dev.power_off()?;
     println!("rome: device is powering off.");
@@ -594,7 +448,7 @@ fn cmd_bootloader(port: Option<&str>) -> Result<()> {
 }
 
 fn cmd_stress(port: Option<&str>, count: u32) -> Result<()> {
-    let mut dev = open_dev(port)?;
+    let mut dev = rome_core::open_dev(port)?;
     dev.ping().context("ping failed")?;
     eprintln!("rome: stress-writing {count} blocks (CMD24) from block 9...");
     let ff = dev.write_stress(count)?;
@@ -607,7 +461,7 @@ fn cmd_stress(port: Option<&str>, count: u32) -> Result<()> {
 }
 
 fn cmd_probe(port: Option<&str>, blocks: &[u32]) -> Result<()> {
-    let mut dev = open_dev(port)?;
+    let mut dev = rome_core::open_dev(port)?;
     dev.ping().context("ping failed")?;
     for &b in blocks {
         let r = dev.write_probe(b)?;
@@ -620,7 +474,7 @@ fn cmd_probe(port: Option<&str>, blocks: &[u32]) -> Result<()> {
 fn cmd_decode(port: Option<&str>, start: u32, count: u32) -> Result<()> {
     use adpcm::STEP_TABLE;
     const INDEX_TABLE: [i32; 16] = [-1,-1,-1,-1,2,4,6,8,-1,-1,-1,-1,2,4,6,8];
-    let mut dev = open_dev(port)?;
+    let mut dev = rome_core::open_dev(port)?;
     dev.ping().context("ping failed")?;
 
     // 8 channel decoder states (predictor, step_index), carried across blocks.
@@ -661,7 +515,7 @@ fn cmd_decode(port: Option<&str>, start: u32, count: u32) -> Result<()> {
 }
 
 fn cmd_dump(port: Option<&str>, block: u32) -> Result<()> {
-    let mut dev = open_dev(port)?;
+    let mut dev = rome_core::open_dev(port)?;
     dev.ping().context("ping failed")?;
     let b = dev.read_block(block)?;
 

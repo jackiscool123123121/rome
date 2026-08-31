@@ -1,17 +1,7 @@
-[package]
-name = "rome"
-version = "0.2.0"
-edition = "2021"
-description = "SP-1 firmware flasher and stem manager"
+[workspace]
+resolver = "2"
+members = ["rome-core", "rome-cli", "rome-gui"]
 
-[[bin]]
-name = "rome"
-path = "src/main.rs"
-
-[dependencies]
-serialport = "4"
-rusb = { version = "0.9", features = ["vendored"] }
-clap = { version = "4", features = ["derive"] }
-indicatif = "0.17"
-anyhow = "1"
-symphonia = { version = "0.5", features = ["flac", "wav", "mp3", "pcm", "ogg"] }
+# CLI-only builds (cargo install --git ... -p rome, used by install.sh) never
+# touch rome-gui or its GUI dependencies at all -- that's the whole reason
+# this is a workspace of 3 packages instead of one crate with 2 [[bin]]s.

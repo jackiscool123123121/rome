@@ -20,6 +20,7 @@ pub const CMD_WRITE_PROBE: u8     = 0x0D;
 pub const CMD_WRITE_STRESS: u8    = 0x0E;
 pub const CMD_AUDIO_DIAG: u8      = 0x0F;
 pub const CMD_POWER_OFF: u8       = 0x10;
+pub const CMD_SONG_SWAP: u8       = 0x11;
 
 const STATUS_OK: u8  = 0x00;
 const STATUS_ERR: u8 = 0xFF;
@@ -315,6 +316,17 @@ impl DeviceConn {
 
     pub fn song_remove(&mut self, idx: u16) -> Result<()> {
         self.cmd(CMD_SONG_REMOVE, &idx.to_le_bytes())?;
+        Ok(())
+    }
+
+    /// Swap two catalog entries in place (reorders the track list -- playback
+    /// order is catalog order, no audio data moves). Rejected by the firmware
+    /// during an active upload.
+    pub fn song_swap(&mut self, idx_a: u16, idx_b: u16) -> Result<()> {
+        let mut payload = [0u8; 4];
+        payload[0..2].copy_from_slice(&idx_a.to_le_bytes());
+        payload[2..4].copy_from_slice(&idx_b.to_le_bytes());
+        self.cmd(CMD_SONG_SWAP, &payload)?;
         Ok(())
     }
 
