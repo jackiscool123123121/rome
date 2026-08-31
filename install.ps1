@@ -9,40 +9,68 @@ $ErrorActionPreference = "Stop"
 $VERSION = "0.2.0"
 $REPO = "jackiscool123123121/rome"
 
-function Info  { Write-Host "==> $args" -ForegroundColor Green }
-function Warn  { Write-Host "==> $args" -ForegroundColor Yellow }
+$BANNER = @'
+ _ __ ___  _ __ ___   ___
+ | '__/ _ \| '_ ` _ \ / _ \
+ | | | (_) | | | | | |  __/
+ |_|  \___/|_| |_| |_|\___|
+'@
 
-# ── Rust toolchain ───────────────────────────────────────────────────────────
+function Info    { Write-Host "==> $args" -ForegroundColor Green }
+function Warn    { Write-Host "==> $args" -ForegroundColor Yellow }
+function Step    { Write-Host "STEP $script:stepNo/$script:NSTEPS  $args" -ForegroundColor DarkCyan }
+function Banner  { Write-Host $BANNER -ForegroundColor Cyan }
+
+$script:NSTEPS = 3
+$script:stepNo = 0
+Clear-Host
+Banner
+Write-Host "  teenage engineering sp-1 stem player - companion cli" -ForegroundColor DarkGray
+Write-Host "  version $VERSION" -ForegroundColor DarkGray
+Write-Host ""
+
+# ── STEP 1: Rust toolchain ───────────────────────────────────────────────────
+$script:stepNo++
+Step "Rust toolchain"
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
-    Info "cargo not found - installing Rust via rustup..."
+    Info "cargo not found - installing Rust via rustup (minimal profile)..."
     Invoke-WebRequest https://sh.rustup.rs -UseBasicParsing -OutFile "$env:TEMP\rustup-init.exe"
     & "$env:TEMP\rustup-init.exe" -y --profile minimal
     # add cargo to this session's PATH
     $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
 } else {
-    Info "cargo already installed"
+    Write-Host "cargo already installed" -ForegroundColor Cyan
 }
 
-# ── install rome ─────────────────────────────────────────────────────────────
-Info "building & installing rome v$VERSION..."
+# ── STEP 2: build & install rome ─────────────────────────────────────────────
+$script:stepNo++
+Step "Build & install rome"
+Info "compiling rome v$VERSION (libusb vendored - first build takes a bit)..."
 cargo install --git "https://github.com/$REPO" --tag "v$VERSION" --locked
+Write-Host "-> rome installed" -ForegroundColor Cyan
 
-Info "done. verifying..."
+# ── STEP 3: verify ───────────────────────────────────────────────────────────
+$script:stepNo++
+Step "Verify"
 $rome = Join-Path $env:USERPROFILE ".cargo\bin\rome.exe"
 if (Test-Path $rome) {
-    Write-Host "==> rome installed: $rome" -ForegroundColor Green
+    Write-Host "OK rome ready: $rome" -ForegroundColor Green
 } else {
-    Warn "cargo installed rome but it isn't on PATH yet - start a new shell."
+    Warn "rome not on PATH - restart your shell or add ~/.cargo\bin."
 }
 
+Write-Host ""
+Banner
 Write-Host @"
 
   -------------------------------------------------------------
    NEXT STEPS
    -----------
    1. Plug in the SP-1 (running marisko).
-   2. rome format          <-- REQUIRED first time: initializes the
-                             disk. do this BEFORE loading any music.
+   2. rome format        <-- REQUIRED first time: initializes the
+                            disk. do this BEFORE loading any music.
    3. rome song add "track" a.wav b.wav c.wav d.wav
+
+   marisko docs: https://github.com/jackiscool123123121/marisko
   -------------------------------------------------------------
 "@
