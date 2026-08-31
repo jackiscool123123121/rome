@@ -486,7 +486,14 @@ fn cmd_codec(port: Option<&str>) -> Result<()> {
     println!("    AIN1 ladder raw  = {} (vol+/vol-/fwd/rwd; hold one while running)", ain1);
     let ul_block = u32::from_le_bytes([d[23], d[24], d[25], d[26]]);
     let ul_fail = d[28];
-    let fail_str = match ul_fail { 0 => "none", 1 => "USB-READ-TIMEOUT", 2 => "WRITE-FAIL", _ => "?" };
+    let fail_str = match ul_fail {
+        0 => "none",
+        1 => "USB-READ-TIMEOUT (host didn't keep the pipe fed in time)",
+        2 => "RESP-REJECT (card rejected the data-response token for this block)",
+        3 => "BUSY-TIMEOUT (NAND program/GC didn't finish within the ~5s ceiling)",
+        4 => "UNKNOWN-WRITE-FAIL",
+        _ => "?",
+    };
     println!("    upload fail      = block {} ({})", ul_block, fail_str);
     Ok(())
 }
