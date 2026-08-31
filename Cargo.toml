@@ -10,7 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 serialport = "4"
-rusb = "0.9"
+rusb = { version = "0.9", features = ["vendored"] }
 clap = { version = "4", features = ["derive"] }
 indicatif = "0.17"
 anyhow = "1"

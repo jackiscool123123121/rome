@@ -4,6 +4,25 @@ cli companion for [marisko](https://github.com/jackiscool123123121/marisko) - cu
 
 flashes firmware over the bootloader and manages stems (songs) on the device's storage over usb.
 
+> **rome is required to use marisko** — it flashes firmware and loads music onto the device.
+
+## install (one line)
+
+**macOS / Linux (sh):**
+```
+curl -sSL https://raw.githubusercontent.com/jackiscool123123121/rome/main/install.sh | sh
+```
+
+**Windows (PowerShell):**
+```
+irm https://raw.githubusercontent.com/jackiscool123123121/rome/main/install.ps1 | iex
+```
+
+the installer pulls in Rust (if missing), then builds and installs `rome` from this
+repo. `libusb` is compiled from source (`vendored`), so **no system libusb step is
+needed** — it works on macOS, Linux, and Windows with just the one-liner. afterwards,
+on a fresh device you must **`rome format` before loading any music** (see below).
+
 ## features
 
 - **firmware flash** — write a `.bin` to the device via the sp-1 bootloader (uart)
@@ -11,6 +30,20 @@ flashes firmware over the bootloader and manages stems (songs) on the device's s
 - **stem upload** — encode 4 stereo stems (`song add`) to 8-channel ima adpcm and upload at ~390 KB/s
 - **disk management** — list / add / remove songs, format, read disk info
 - **diagnostics** — codec bring-up (CS42L42 + TAS2505), feed-thread / eMMC health, EXT_CSD dump, raw block read/decode, write probe, write stress
+
+## first-time setup (required)
+
+on a new device, the eMMC has no valid disk header, so you **must format it before
+loading any music** — otherwise `rome song add` / playback will fail:
+
+```
+# plug in the SP-1 running marisko, then:
+rome format --yes
+```
+
+`rome format` writes the disk header (v3) and erases everything. it only needs to
+be run once per device (or after a re-flash where you want to clear the library).
+verify with `rome info` — it should report `Disk: v3 songs: 0`.
 
 ## usage
 
@@ -77,7 +110,8 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 cargo build --release
 ```
 
-requires libusb (`pacman -S libusb` / `brew install libusb`).
+requires a Rust toolchain; `libusb` is vendored (compiled from source) so no
+system dependency is needed. (plain `cargo install --path .` works too.)
 
 ## license
 
