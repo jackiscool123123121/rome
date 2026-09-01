@@ -1,6 +1,6 @@
 [package]
 name = "rome-gui"
-version = "0.4.2"
+version = "0.3.1"
 edition = "2021"
 description = "Desktop GUI for the SP-1 stem player companion tool"
 

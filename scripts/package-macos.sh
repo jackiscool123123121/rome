@@ -25,8 +25,8 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
     <key>CFBundleName</key>            <string>rome</string>
     <key>CFBundleDisplayName</key>     <string>rome</string>
     <key>CFBundleIdentifier</key>      <string>com.jackiscool.rome</string>
-    <key>CFBundleVersion</key>         <string>0.4.2</string>
-    <key>CFBundleShortVersionString</key> <string>0.4.2</string>
+    <key>CFBundleVersion</key>         <string>0.3.1</string>
+    <key>CFBundleShortVersionString</key> <string>0.3.1</string>
     <key>CFBundleExecutable</key>      <string>rome-gui</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>  <string>11.0</string>

@@ -1,6 +1,6 @@
 [package]
 name = "rome"
-version = "0.4.2"
+version = "0.3.1"
 edition = "2021"
 description = "SP-1 firmware flasher and stem manager"
 
