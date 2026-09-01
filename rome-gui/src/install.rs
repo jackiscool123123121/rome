@@ -62,16 +62,20 @@ pub fn install_cli_for_new_user() -> Option<String> {
     ))
 }
 
+/// Same location `cargo install` (and therefore install.sh/install.ps1 and
+/// `rome update`) already puts it -- there must be exactly one canonical
+/// `rome` on disk, or the GUI's copy and the CLI-installer's copy can end up
+/// shadowing each other on PATH with no way to tell which one is running.
 #[cfg(unix)]
 fn cli_install_path() -> Option<PathBuf> {
     let home = std::env::var("HOME").ok()?;
-    Some(PathBuf::from(home).join(".local").join("bin").join("rome"))
+    Some(PathBuf::from(home).join(".cargo").join("bin").join("rome"))
 }
 
 #[cfg(windows)]
 fn cli_install_path() -> Option<PathBuf> {
-    let local = std::env::var("LOCALAPPDATA").ok()?;
-    Some(PathBuf::from(local).join("rome").join("bin").join("rome.exe"))
+    let profile = std::env::var("USERPROFILE").ok()?;
+    Some(PathBuf::from(profile).join(".cargo").join("bin").join("rome.exe"))
 }
 
 #[cfg(unix)]
