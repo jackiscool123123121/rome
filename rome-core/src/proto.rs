@@ -6,6 +6,7 @@ use rusb::{Direction, TransferType, UsbContext};
 
 /// See DeviceConn::battery(). Percent is an approximation -- see marisko's
 /// battery.c for the calibration caveat.
+#[derive(Clone, Copy)]
 pub struct BatteryStatus {
     pub percent: Option<u8>,
     pub charging: bool,

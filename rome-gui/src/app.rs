@@ -3,12 +3,13 @@ use std::sync::mpsc;
 
 use eframe::egui;
 use rome_core::disk::{DiskHeader, SongEntry};
+use rome_core::proto::BatteryStatus;
 
 use crate::bundle::BundleSource;
 use crate::jobs::{self, AddMode, Job, JobMsg, SongInput};
 
 #[derive(PartialEq)]
-pub enum Tab { Songs, Bundle, Device, Flash, Diagnostics }
+pub enum Tab { Songs, Bundle, Device, Flash, Info, Diagnostics }
 
 /// First-run setup runs across a few frames rather than blocking main()
 /// before the event loop starts (native dialogs are unreliable that early):
@@ -28,6 +29,8 @@ pub struct RomeApp {
     pub(crate) log: String,
     pub(crate) header: Option<DiskHeader>,
     pub(crate) songs: Vec<SongEntry>,
+    pub(crate) storage_total_bytes: Option<u64>,
+    pub(crate) battery: Option<BatteryStatus>,
     pub(crate) diagnostics_text: String,
 
     // Add-song form (Songs tab)
@@ -67,6 +70,8 @@ impl RomeApp {
             log: String::new(),
             header: None,
             songs: Vec::new(),
+            storage_total_bytes: None,
+            battery: None,
             diagnostics_text: String::new(),
             add_mode: AddMode::FourStems,
             new_name: String::new(),
@@ -97,9 +102,11 @@ impl RomeApp {
     fn poll(&mut self) {
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
-                JobMsg::Info { header, songs } => {
-                    self.header = Some(header);
-                    self.songs = songs;
+                JobMsg::Info(snap) => {
+                    self.header = Some(snap.header);
+                    self.songs = snap.songs;
+                    self.storage_total_bytes = snap.storage_total_bytes;
+                    self.battery = snap.battery;
                 }
                 JobMsg::Progress { frac, eta_secs } => {
                     self.progress = frac;
@@ -161,6 +168,7 @@ impl eframe::App for RomeApp {
                 ui.selectable_value(&mut self.tab, Tab::Bundle, "Bundle");
                 ui.selectable_value(&mut self.tab, Tab::Device, "Device");
                 ui.selectable_value(&mut self.tab, Tab::Flash, "Flash");
+                ui.selectable_value(&mut self.tab, Tab::Info, "Info");
                 ui.selectable_value(&mut self.tab, Tab::Diagnostics, "Diagnostics");
                 ui.add_space(16.0);
                 if ui.add_enabled(!self.busy, egui::Button::new("Refresh")).clicked() {
@@ -188,6 +196,7 @@ impl eframe::App for RomeApp {
             Tab::Bundle => self.bundle_tab(ui, ctx),
             Tab::Device => self.device_tab(ui, ctx),
             Tab::Flash => self.flash_tab(ui, ctx),
+            Tab::Info => self.info_tab(ui),
             Tab::Diagnostics => self.diagnostics_tab(ui, ctx),
         });
 

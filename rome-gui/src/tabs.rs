@@ -360,6 +360,72 @@ impl RomeApp {
         }
     }
 
+    pub(crate) fn info_tab(&mut self, ui: &mut egui::Ui) {
+        let Some(h) = &self.header else {
+            ui.label("connecting...");
+            return;
+        };
+
+        ui.heading("Disk");
+        if !h.is_valid() {
+            ui.colored_label(egui::Color32::from_rgb(220, 120, 30),
+                "Not formatted -- use the Device tab.");
+        } else {
+            ui.label(format!("Format version {}", h.version));
+
+            let live_songs = self.songs.iter().filter(|e| !e.is_free()).count();
+            let total_secs: f64 = self.songs.iter()
+                .filter(|e| !e.is_free())
+                .map(|e| e.block_count as f64 * 128.0 / 48000.0)
+                .sum();
+            ui.label(format!(
+                "{} song{} -- {:.0}m{:02.0}s total",
+                live_songs, if live_songs == 1 { "" } else { "s" },
+                (total_secs / 60.0).floor(), total_secs % 60.0
+            ));
+        }
+
+        ui.separator();
+        ui.heading("Storage");
+        let used_bytes = h.next_free_block as u64 * 512;
+        match self.storage_total_bytes {
+            Some(total) if total > 0 => {
+                let used_gb = used_bytes as f64 / 1e9;
+                let total_gb = total as f64 / 1e9;
+                let frac = (used_bytes as f32 / total as f32).clamp(0.0, 1.0);
+                ui.add(egui::ProgressBar::new(frac).text(format!("{used_gb:.1}GB / {total_gb:.1}GB")));
+            }
+            _ => {
+                ui.label(format!("{:.1}GB used (total capacity unknown)", used_bytes as f64 / 1e9));
+            }
+        }
+
+        ui.separator();
+        ui.heading("Battery");
+        match &self.battery {
+            Some(b) => {
+                match b.percent {
+                    Some(pct) => {
+                        ui.add(egui::ProgressBar::new(pct as f32 / 100.0).text(format!("{pct}%")));
+                    }
+                    None => { ui.label("percent unavailable"); }
+                }
+                let (text, color) = if b.usb_present && b.charging {
+                    ("Charging", egui::Color32::from_rgb(80, 180, 90))
+                } else if b.usb_present {
+                    ("USB connected, not charging", egui::Color32::from_rgb(200, 160, 60))
+                } else {
+                    ("On battery", egui::Color32::GRAY)
+                };
+                ui.colored_label(color, text);
+                ui.weak("Percent is approximate -- pending real calibration on this unit.");
+            }
+            None => {
+                ui.weak("Battery status unavailable -- needs marisko v0.5.0 or newer.");
+            }
+        }
+    }
+
     pub(crate) fn diagnostics_tab(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         if ui.add_enabled(!self.busy, egui::Button::new("Read diagnostics")).clicked() {
             self.spawn(Job::Diagnostics, ctx);

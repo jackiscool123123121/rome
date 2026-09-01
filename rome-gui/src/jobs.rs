@@ -9,8 +9,19 @@ use std::sync::mpsc;
 
 use eframe::egui;
 use rome_core::disk::{DiskHeader, SongEntry};
+use rome_core::proto::BatteryStatus;
 
 use crate::bundle::{self, BundleSource};
+
+/// Everything the Songs/Bundle/Info tabs need after a refresh. Storage total
+/// and battery are best-effort (None on read failure, or on firmware that
+/// predates USB_CMD_BATTERY) -- they never block the header/song list.
+pub struct DeviceSnapshot {
+    pub header: DiskHeader,
+    pub songs: Vec<SongEntry>,
+    pub storage_total_bytes: Option<u64>,
+    pub battery: Option<BatteryStatus>,
+}
 
 // ── Song input (owned paths; borrowed into rome_core::SongSource at encode
 // time) -- lets the queue hold either input mode uniformly. ─────────────────
@@ -56,7 +67,7 @@ pub enum Job {
 }
 
 pub enum JobMsg {
-    Info { header: DiskHeader, songs: Vec<SongEntry> },
+    Info(DeviceSnapshot),
     Progress { frac: f32, eta_secs: Option<f32> },
     Log(String),
     Diagnostics(String),
@@ -113,7 +124,7 @@ pub fn run_job(job: Job, tx: mpsc::Sender<JobMsg>, ctx: egui::Context) {
         };
         match job {
             Job::Refresh => match fetch_info() {
-                Ok((header, songs)) => send(JobMsg::Info { header, songs }),
+                Ok(snap) => send(JobMsg::Info(snap)),
                 Err(e) => send(JobMsg::Error(format!("{e:#}"))),
             },
             Job::TransferQueue { items } => {
@@ -130,7 +141,7 @@ pub fn run_job(job: Job, tx: mpsc::Sender<JobMsg>, ctx: egui::Context) {
                     }
                 }
                 match fetch_info() {
-                    Ok((header, songs)) => send(JobMsg::Info { header, songs }),
+                    Ok(snap) => send(JobMsg::Info(snap)),
                     Err(e) => send(JobMsg::Error(format!("{e:#}"))),
                 }
                 send(JobMsg::Log(if had_error {
@@ -152,7 +163,7 @@ pub fn run_job(job: Job, tx: mpsc::Sender<JobMsg>, ctx: egui::Context) {
                 })();
                 match result {
                     Ok(()) => match fetch_info() {
-                        Ok((header, songs)) => send(JobMsg::Info { header, songs }),
+                        Ok(snap) => send(JobMsg::Info(snap)),
                         Err(e) => send(JobMsg::Error(format!("{e:#}"))),
                     },
                     Err(e) => send(JobMsg::Error(format!("{e:#}"))),
@@ -165,7 +176,7 @@ pub fn run_job(job: Job, tx: mpsc::Sender<JobMsg>, ctx: egui::Context) {
                 })();
                 match result {
                     Ok(()) => match fetch_info() {
-                        Ok((header, songs)) => send(JobMsg::Info { header, songs }),
+                        Ok(snap) => send(JobMsg::Info(snap)),
                         Err(e) => send(JobMsg::Error(format!("{e:#}"))),
                     },
                     Err(e) => send(JobMsg::Error(format!("{e:#}"))),
@@ -180,7 +191,7 @@ pub fn run_job(job: Job, tx: mpsc::Sender<JobMsg>, ctx: egui::Context) {
                     Ok(()) => {
                         send(JobMsg::Log("disk formatted".into()));
                         match fetch_info() {
-                            Ok((header, songs)) => send(JobMsg::Info { header, songs }),
+                            Ok(snap) => send(JobMsg::Info(snap)),
                             Err(e) => send(JobMsg::Error(format!("{e:#}"))),
                         }
                     }
@@ -237,17 +248,22 @@ pub fn run_job(job: Job, tx: mpsc::Sender<JobMsg>, ctx: egui::Context) {
     });
 }
 
-pub fn fetch_info() -> anyhow::Result<(DiskHeader, Vec<SongEntry>)> {
+pub fn fetch_info() -> anyhow::Result<DeviceSnapshot> {
     let mut dev = rome_core::open_dev(None)?;
     dev.ping()?;
     let raw = dev.disk_info()?;
     let header = DiskHeader::from_block(&raw);
-    if !header.is_valid() {
-        return Ok((header, Vec::new()));
-    }
-    if header.song_count == 0 {
-        return Ok((header, Vec::new()));
-    }
-    let catalog = dev.catalog_read()?;
-    Ok((header, rome_core::disk::parse_catalog(&catalog)))
+
+    let storage_total_bytes = dev.extcsd_dump().ok().map(|e| {
+        u32::from_le_bytes([e[212], e[213], e[214], e[215]]) as u64 * 512
+    });
+    let battery = dev.battery().ok();
+
+    let songs = if header.is_valid() && header.song_count > 0 {
+        rome_core::disk::parse_catalog(&dev.catalog_read()?)
+    } else {
+        Vec::new()
+    };
+
+    Ok(DeviceSnapshot { header, songs, storage_total_bytes, battery })
 }
