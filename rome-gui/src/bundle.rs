@@ -90,12 +90,20 @@ pub fn save_bundle(
                 let mut dev = rome_core::open_dev(None)?;
                 let tx2 = tx.clone();
                 let ctx2 = ctx.clone();
+                let start = std::time::Instant::now();
                 let stems = rome_core::read_song_stems(
                     &mut dev, *block_start, *block_count,
                     move |done, total| {
+                        let elapsed = start.elapsed().as_secs_f32();
+                        let eta_secs = if done > 0 && elapsed > 0.0 {
+                            let rate = done as f32 / elapsed; // blocks/sec
+                            Some(((total - done) as f32 / rate).max(0.0))
+                        } else {
+                            None
+                        };
                         let _ = tx2.send(JobMsg::Progress {
                             frac: done as f32 / total.max(1) as f32,
-                            eta_secs: None,
+                            eta_secs,
                         });
                         ctx2.request_repaint();
                     },

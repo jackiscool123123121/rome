@@ -10,6 +10,14 @@ use crate::jobs::{self, AddMode, Job, JobMsg, SongInput};
 #[derive(PartialEq)]
 pub enum Tab { Songs, Bundle, Device, Flash, Diagnostics }
 
+/// First-run setup runs across a few frames rather than blocking main()
+/// before the event loop starts (native dialogs are unreliable that early):
+/// frame 1 shows "installing..." if this is a new user, frame 2 does the
+/// actual copy, frame 3 (existing or new users alike) may show the
+/// macOS-only "move to Applications?" dialog.
+#[derive(PartialEq)]
+enum FirstFrameStage { NotStarted, Installing, Offering, Done }
+
 pub struct RomeApp {
     pub(crate) tab: Tab,
     tx: mpsc::Sender<JobMsg>,
@@ -42,6 +50,8 @@ pub struct RomeApp {
     pub(crate) ports: Vec<String>,
 
     pub(crate) format_confirm: bool,
+
+    first_frame: FirstFrameStage,
 }
 
 impl RomeApp {
@@ -72,11 +82,9 @@ impl RomeApp {
             flash_path: None,
             ports: Vec::new(),
             format_confirm: false,
+            first_frame: FirstFrameStage::NotStarted,
         };
         app.ports = rome_core::list_serial_ports().unwrap_or_default();
-        if let Some(msg) = crate::install::self_install_cli() {
-            app.log = msg;
-        }
         app
     }
 
@@ -109,11 +117,43 @@ impl RomeApp {
             }
         }
     }
+
+    /// Advance first-run setup by one step per frame -- see FirstFrameStage.
+    /// Spread across frames so the "installing..." text actually gets a
+    /// chance to paint, and so the macOS move-to-Applications dialog (a
+    /// blocking native call) only ever fires once the event loop is
+    /// definitely pumping frames, not synchronously from main().
+    fn drive_first_frame(&mut self, ctx: &egui::Context) {
+        match self.first_frame {
+            FirstFrameStage::NotStarted => {
+                if crate::install::is_new_user() {
+                    self.log = "installing rome CLI...".to_string();
+                    self.first_frame = FirstFrameStage::Installing;
+                } else {
+                    self.first_frame = FirstFrameStage::Offering;
+                }
+                ctx.request_repaint();
+            }
+            FirstFrameStage::Installing => {
+                if let Some(msg) = crate::install::install_cli_for_new_user() {
+                    self.log = msg;
+                }
+                self.first_frame = FirstFrameStage::Offering;
+                ctx.request_repaint();
+            }
+            FirstFrameStage::Offering => {
+                crate::install::maybe_offer_move_to_applications();
+                self.first_frame = FirstFrameStage::Done;
+            }
+            FirstFrameStage::Done => {}
+        }
+    }
 }
 
 impl eframe::App for RomeApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll();
+        self.drive_first_frame(ctx);
 
         egui::TopBottomPanel::top("tabs").show(ctx, |ui| {
             ui.horizontal(|ui| {

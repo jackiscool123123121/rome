@@ -16,8 +16,6 @@ use app::RomeApp;
 use eframe::egui;
 
 fn main() -> eframe::Result<()> {
-    install::maybe_offer_move_to_applications();
-
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([620.0, 760.0])

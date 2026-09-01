@@ -1,0 +1,33 @@
+name: Build GUI
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build and package
+        run: sh scripts/package-macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RomeGUI-macos
+          path: dist/RomeGUI-macos.zip
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build and package
+        shell: bash
+        run: sh scripts/package-windows.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RomeGUI-windows
+          path: dist/RomeGUI-windows.zip
