@@ -1,6 +1,6 @@
 [package]
 name = "rome-core"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "Shared device protocol, disk format, flashing, and encode/upload pipeline for rome"
 
