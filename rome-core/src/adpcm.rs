@@ -110,6 +110,44 @@ pub fn encode_8ch(channel_pcm: &[Vec<i16>; CHANNELS]) -> Vec<[u8; BLOCK_SIZE]> {
     blocks
 }
 
+/// Decode 8-channel ADPCM blocks back to per-channel PCM samples. State
+/// starts from silence (predictor=0, step_index=0), same as the encoder's
+/// initial state, and persists across blocks.
+pub fn decode_8ch(blocks: &[[u8; BLOCK_SIZE]]) -> [Vec<i16>; CHANNELS] {
+    let mut pred = [0i32; CHANNELS];
+    let mut sidx = [0i32; CHANNELS];
+    let mut out: [Vec<i16>; CHANNELS] =
+        std::array::from_fn(|_| Vec::with_capacity(blocks.len() * SAMPLES_PER_BLOCK));
+
+    let step = |s: &mut i32, p: &mut i32, n: u8| -> i32 {
+        let st = STEP_TABLE[*s as usize];
+        let mut d = st >> 3;
+        if n & 4 != 0 { d += st; }
+        if n & 2 != 0 { d += st >> 1; }
+        if n & 1 != 0 { d += st >> 2; }
+        if n & 8 != 0 { d = -d; }
+        *p = (*p + d).clamp(-32768, 32767);
+        *s = (*s + INDEX_TABLE[(n & 0xF) as usize]).clamp(0, 88);
+        *p
+    };
+
+    for b in blocks {
+        for i in 0..SAMPLES_PER_BLOCK {
+            for stem in 0..4 {
+                let byte_l = b[stem * 128 + i / 2];
+                let byte_r = b[stem * 128 + 64 + i / 2];
+                let nl = if i & 1 == 1 { byte_l >> 4 } else { byte_l & 0xF };
+                let nr = if i & 1 == 1 { byte_r >> 4 } else { byte_r & 0xF };
+                let l = step(&mut sidx[stem * 2],     &mut pred[stem * 2],     nl);
+                let r = step(&mut sidx[stem * 2 + 1], &mut pred[stem * 2 + 1], nr);
+                out[stem * 2].push(l as i16);
+                out[stem * 2 + 1].push(r as i16);
+            }
+        }
+    }
+    out
+}
+
 /// Audio blocks per baked VU-level byte. MUST match firmware `LVL_DECIM`.
 pub const LVL_DECIM: usize = 16;
 

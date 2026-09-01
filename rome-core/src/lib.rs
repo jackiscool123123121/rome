@@ -7,6 +7,7 @@ pub mod adpcm;
 pub mod disk;
 pub mod flash;
 pub mod proto;
+pub mod wav;
 
 use std::path::Path;
 
@@ -39,12 +40,11 @@ pub fn resample_to_48k(samples: &[i16], src_rate: u32) -> Vec<i16> {
     out
 }
 
-/// Load any audio file (WAV, FLAC, MP3, OGG…) and return (left, right) at 48 kHz.
-/// Mono files are duplicated to stereo. Multi-channel files use ch 0 + ch 1.
-/// `resampled_from` is set to the source sample rate if it wasn't already 48 kHz
-/// (callers decide whether/how to report that; the CLI prints it, the GUI shows
-/// it in the UI instead of stderr).
-pub fn load_audio_stereo(path: &Path) -> Result<(Vec<i16>, Vec<i16>, Option<u32>)> {
+/// Decode every channel of an audio file at its native sample rate (no
+/// resampling yet -- callers resample per-channel after this, since the
+/// combined-8ch path needs to know the channel count before deciding how much
+/// silence to pad missing stems with). Returns (channels, sample_rate).
+fn decode_all_channels(path: &Path) -> Result<(Vec<Vec<i16>>, u32)> {
     let file = std::fs::File::open(path)
         .with_context(|| format!("cannot open {}", path.display()))?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
@@ -66,15 +66,15 @@ pub fn load_audio_stereo(path: &Path) -> Result<(Vec<i16>, Vec<i16>, Option<u32>
         .ok_or_else(|| anyhow::anyhow!("{}: unknown sample rate", path.display()))?;
     let n_channels = track.codec_params.channels
         .map(|c| c.count())
-        .unwrap_or(2);
+        .unwrap_or(2)
+        .max(1);
     let track_id = track.id;
 
     let mut decoder = symphonia::default::get_codecs()
         .make(&track.codec_params, &DecoderOptions::default())
         .with_context(|| format!("{}: unsupported codec", path.display()))?;
 
-    let mut left_raw: Vec<i16> = Vec::new();
-    let mut right_raw: Vec<i16> = Vec::new();
+    let mut channels: Vec<Vec<i16>> = vec![Vec::new(); n_channels];
 
     loop {
         let packet = match format.next_packet() {
@@ -97,21 +97,53 @@ pub fn load_audio_stereo(path: &Path) -> Result<(Vec<i16>, Vec<i16>, Option<u32>
         buf.copy_interleaved_ref(decoded);
         let samples = buf.samples();
 
-        let ch = n_channels.max(1);
-        for frame in samples.chunks(ch) {
-            left_raw.push(frame[0]);
-            right_raw.push(if ch >= 2 { frame[1] } else { frame[0] });
+        for frame in samples.chunks(n_channels) {
+            for (ch, &s) in frame.iter().enumerate() {
+                channels[ch].push(s);
+            }
         }
     }
 
-    if left_raw.is_empty() {
+    if channels[0].is_empty() {
         bail!("{}: decoded no samples", path.display());
     }
+    Ok((channels, sample_rate))
+}
 
+/// Load any audio file (WAV, FLAC, MP3, OGG…) and return (left, right) at 48 kHz.
+/// Mono files are duplicated to stereo. Multi-channel files use ch 0 + ch 1 --
+/// for a combined 8-channel SP-1-style file, use `load_combined_stem_wav`
+/// instead. `resampled_from` is set to the source sample rate if it wasn't
+/// already 48 kHz (callers decide whether/how to report that; the CLI prints
+/// it, the GUI shows it in the UI instead of stderr).
+pub fn load_audio_stereo(path: &Path) -> Result<(Vec<i16>, Vec<i16>, Option<u32>)> {
+    let (channels, sample_rate) = decode_all_channels(path)?;
     let resampled_from = if sample_rate != 48000 { Some(sample_rate) } else { None };
-    let left  = resample_to_48k(&left_raw, sample_rate);
-    let right = resample_to_48k(&right_raw, sample_rate);
+    let left  = resample_to_48k(&channels[0], sample_rate);
+    let right = resample_to_48k(channels.get(1).unwrap_or(&channels[0]), sample_rate);
     Ok((left, right, resampled_from))
+}
+
+/// Load a single combined multi-stem WAV per the SP-1 / solderless stem-loader
+/// convention (see https://solderless.engineering/stemloader/help/#preparing-wav-files):
+/// up to 8 channels mapped as ch1-2 = stem1 L/R, ch3-4 = stem2, ch5-6 = stem3,
+/// ch7-8 = stem4. Fewer than 8 channels leaves the remaining stems silent
+/// (matching the documented behavior: "the corresponding stems will be
+/// empty"); more than 8 are ignored. Returns 4 (left, right) pairs at 48 kHz,
+/// each padded to the same length, plus the source sample rate if resampled.
+pub fn load_combined_stem_wav(path: &Path) -> Result<([(Vec<i16>, Vec<i16>); 4], Option<u32>)> {
+    let (channels, sample_rate) = decode_all_channels(path)?;
+    let resampled_from = if sample_rate != 48000 { Some(sample_rate) } else { None };
+    let frame_count = channels[0].len();
+    let silence = vec![0i16; frame_count];
+
+    let get = |idx: usize| -> Vec<i16> {
+        resample_to_48k(channels.get(idx).unwrap_or(&silence), sample_rate)
+    };
+    let stems: [(Vec<i16>, Vec<i16>); 4] = std::array::from_fn(|i| {
+        (get(i * 2), get(i * 2 + 1))
+    });
+    Ok((stems, resampled_from))
 }
 
 // ── Device helpers ────────────────────────────────────────────────────────────
@@ -157,24 +189,52 @@ pub struct EncodedSong {
 
 /// Load, resample, and IMA-ADPCM-encode 4 stereo stems into the on-disk block
 /// format (audio blocks + baked VU-level blocks), without touching a device.
-pub fn encode_song(stems: [&Path; 4]) -> Result<EncodedSong> {
+/// Where a song's audio comes from: 4 separate stereo files (the original
+/// rome workflow), or one combined multi-channel WAV per the SP-1 /
+/// solderless stem-loader convention (see `load_combined_stem_wav`).
+pub enum SongSource<'a> {
+    FourStems([&'a Path; 4]),
+    CombinedWav(&'a Path),
+}
+
+pub fn encode_song(source: SongSource) -> Result<EncodedSong> {
     let mut channel_pcm: [Vec<i16>; adpcm::CHANNELS] = std::array::from_fn(|_| Vec::new());
     let mut notes: Vec<StemNote> = Vec::with_capacity(4);
 
-    for (stem_idx, path) in stems.iter().enumerate() {
-        let (left, right, resampled_from) = load_audio_stereo(path)?;
-        let n = left.len();
-        let target = channel_pcm[0].len().max(n);
-        for ch in channel_pcm.iter_mut() {
-            ch.resize(target, 0);
+    match source {
+        SongSource::FourStems(stems) => {
+            for (stem_idx, path) in stems.iter().enumerate() {
+                let (left, right, resampled_from) = load_audio_stereo(path)?;
+                let n = left.len();
+                let target = channel_pcm[0].len().max(n);
+                for ch in channel_pcm.iter_mut() {
+                    ch.resize(target, 0);
+                }
+                let ch_l = stem_idx * 2;
+                let ch_r = stem_idx * 2 + 1;
+                channel_pcm[ch_l] = left;
+                channel_pcm[ch_l].resize(target, 0);
+                channel_pcm[ch_r] = right;
+                channel_pcm[ch_r].resize(target, 0);
+                notes.push(StemNote { path: path.to_path_buf(), frames: n, resampled_from });
+            }
         }
-        let ch_l = stem_idx * 2;
-        let ch_r = stem_idx * 2 + 1;
-        channel_pcm[ch_l] = left;
-        channel_pcm[ch_l].resize(target, 0);
-        channel_pcm[ch_r] = right;
-        channel_pcm[ch_r].resize(target, 0);
-        notes.push(StemNote { path: path.to_path_buf(), frames: n, resampled_from });
+        SongSource::CombinedWav(path) => {
+            let (stems, resampled_from) = load_combined_stem_wav(path)?;
+            let max_len = stems.iter().map(|(l, _)| l.len()).max().unwrap_or(0);
+            for (stem_idx, (left, right)) in stems.into_iter().enumerate() {
+                let n = left.len();
+                let ch_l = stem_idx * 2;
+                let ch_r = stem_idx * 2 + 1;
+                channel_pcm[ch_l] = left;
+                channel_pcm[ch_l].resize(max_len, 0);
+                channel_pcm[ch_r] = right;
+                channel_pcm[ch_r].resize(max_len, 0);
+                // All 4 "stems" share the one source file -- honestly reflect
+                // that in the per-stem notes rather than inventing 4 fake paths.
+                notes.push(StemNote { path: path.to_path_buf(), frames: n, resampled_from });
+            }
+        }
     }
 
     let max_len = channel_pcm.iter().map(|c| c.len()).max().unwrap_or(0);
@@ -241,4 +301,25 @@ pub fn upload_encoded_song(
 
     dev.song_commit()?;
     Ok(song_idx)
+}
+
+/// Read a song's raw audio blocks off the device (one CMD_READ_BLOCK per
+/// block -- the firmware has no batch-read command) and decode them back to
+/// four stereo PCM stems at 48 kHz, the rate they were stored at. Used to
+/// pull an already-uploaded song's audio into a bundle for sharing.
+pub fn read_song_stems(
+    dev: &mut proto::DeviceConn,
+    block_start: u32,
+    block_count: u32,
+    mut progress: impl FnMut(u32, u32),
+) -> Result<[(Vec<i16>, Vec<i16>); 4]> {
+    let mut blocks: Vec<[u8; 512]> = Vec::with_capacity(block_count as usize);
+    for i in 0..block_count {
+        blocks.push(dev.read_block(block_start + i)?);
+        progress(i + 1, block_count);
+    }
+    let channels = adpcm::decode_8ch(&blocks);
+    Ok(std::array::from_fn(|stem| {
+        (channels[stem * 2].clone(), channels[stem * 2 + 1].clone())
+    }))
 }

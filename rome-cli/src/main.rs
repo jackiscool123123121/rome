@@ -134,6 +134,20 @@ enum SongCmd {
         stem4: PathBuf,
     },
 
+    /// Upload a song from a single combined multi-stem WAV (TE / solderless
+    /// stem-loader format: 8-channel, ch1-2/3-4/5-6/7-8 = stems 1-4)
+    AddCombined {
+        /// Serial port (auto-detected if omitted)
+        #[arg(short, long)]
+        port: Option<String>,
+
+        /// Song name (max 23 chars)
+        name: String,
+
+        /// Combined 8-channel WAV file
+        file: PathBuf,
+    },
+
     /// Remove a song from the library by catalog index
     Rm {
         #[arg(short, long)]
@@ -233,15 +247,14 @@ fn cmd_format(port: Option<&str>, confirmed: bool) -> Result<()> {
 fn cmd_song_add(
     port: Option<&str>,
     name: &str,
-    stems: [&PathBuf; 4],
+    source: rome_core::SongSource,
 ) -> Result<()> {
     if name.len() > 23 {
         bail!("song name too long (max 23 chars)");
     }
 
     eprintln!("rome: loading stems...");
-    let stem_paths: [&std::path::Path; 4] = std::array::from_fn(|i| stems[i].as_path());
-    let song = rome_core::encode_song(stem_paths)?;
+    let song = rome_core::encode_song(source)?;
     for (i, note) in song.stems.iter().enumerate() {
         if let Some(src_rate) = note.resampled_from {
             eprintln!("    resampling {src_rate} Hz → 48000 Hz");
@@ -415,7 +428,12 @@ fn main() -> Result<()> {
         Cmd::Format { port, yes }  => cmd_format(port.as_deref(), yes),
         Cmd::Song   { cmd }        => match cmd {
             SongCmd::Add { port, name, stem1, stem2, stem3, stem4 } => {
-                cmd_song_add(port.as_deref(), &name, [&stem1, &stem2, &stem3, &stem4])
+                let source = rome_core::SongSource::FourStems([&stem1, &stem2, &stem3, &stem4]);
+                cmd_song_add(port.as_deref(), &name, source)
+            }
+            SongCmd::AddCombined { port, name, file } => {
+                let source = rome_core::SongSource::CombinedWav(&file);
+                cmd_song_add(port.as_deref(), &name, source)
             }
             SongCmd::Rm   { port, idx } => cmd_song_rm(port.as_deref(), idx),
             SongCmd::List { port }      => cmd_song_list(port.as_deref()),
