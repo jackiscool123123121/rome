@@ -74,6 +74,9 @@ impl RomeApp {
             format_confirm: false,
         };
         app.ports = rome_core::list_serial_ports().unwrap_or_default();
+        if let Some(msg) = crate::install::self_install_cli() {
+            app.log = msg;
+        }
         app
     }
 

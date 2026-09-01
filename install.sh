@@ -8,7 +8,6 @@
 
 set -eu
 
-VERSION="0.2.0"
 REPO="jackiscool123123121/rome"
 BANNER=' _ __ ___  _ __ ___   ___
 | '"'"'__/ _ \| '"'"'_ ` _ \ / _ \
@@ -28,7 +27,6 @@ NSTEPS=3
 clear 2>/dev/null || true
 printf '\033[1;96m%s\033[0m\n' "$BANNER"
 dim "  teenage engineering sp-1 stem player — companion cli"
-dim "  version ${VERSION}"
 printf '\n'
 
 # ── STEP 1: Rust toolchain ───────────────────────────────────────────────────
@@ -43,9 +41,9 @@ fi
 
 # ── STEP 2: build & install rome ─────────────────────────────────────────────
 step "Build & install rome"
-say "compiling rome v$VERSION (libusb vendored — first build takes a bit)..."
+say "compiling rome (libusb vendored — first build takes a bit)..."
 printf '\033[2m'
-cargo install --git "https://github.com/$REPO" --tag "v$VERSION" --locked
+cargo install --git "https://github.com/$REPO" --branch main --locked --force rome
 printf '\033[0m'
 cyan "→ rome installed"
 

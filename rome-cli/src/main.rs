@@ -108,6 +108,9 @@ enum Cmd {
         /// Number of blocks to decode
         count: u32,
     },
+
+    /// Rebuild and reinstall rome from the latest code on GitHub
+    Update,
 }
 
 #[derive(Subcommand)]
@@ -446,7 +449,41 @@ fn main() -> Result<()> {
         Cmd::Decode { port, start, count } => cmd_decode(port.as_deref(), start, count),
         Cmd::Probe  { port, blocks } => cmd_probe(port.as_deref(), &blocks),
         Cmd::Stress { port, count } => cmd_stress(port.as_deref(), count),
+        Cmd::Update => cmd_update(),
     }
+}
+
+/// Reinstall rome by re-running the same one-line installer used for a fresh
+/// setup. It rebuilds from the latest commit on GitHub's main branch, so this
+/// always ends up on the newest version, not just the latest tagged release.
+fn cmd_update() -> Result<()> {
+    eprintln!("rome: fetching and reinstalling the latest version...");
+
+    #[cfg(unix)]
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg("curl -sSL https://raw.githubusercontent.com/jackiscool123123121/rome/main/install.sh | sh")
+        .status()
+        .context("failed to run the installer")?;
+
+    #[cfg(windows)]
+    let status = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            "irm https://raw.githubusercontent.com/jackiscool123123121/rome/main/install.ps1 | iex",
+        ])
+        .status()
+        .context("failed to run the installer")?;
+
+    if !status.success() {
+        bail!(
+            "installer exited with {status} -- on Windows this can happen if `rome.exe` is \
+             locked while it's running; close other terminals and try again"
+        );
+    }
+    eprintln!("rome: update complete");
+    Ok(())
 }
 
 fn cmd_bootloader(port: Option<&str>) -> Result<()> {

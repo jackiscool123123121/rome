@@ -6,7 +6,6 @@
 # afterwards run `rome format` before loading music.
 
 $ErrorActionPreference = "Stop"
-$VERSION = "0.2.0"
 $REPO = "jackiscool123123121/rome"
 
 $BANNER = @'
@@ -26,7 +25,6 @@ $script:stepNo = 0
 Clear-Host
 Banner
 Write-Host "  teenage engineering sp-1 stem player - companion cli" -ForegroundColor DarkGray
-Write-Host "  version $VERSION" -ForegroundColor DarkGray
 Write-Host ""
 
 # ── STEP 1: Rust toolchain ───────────────────────────────────────────────────
@@ -45,8 +43,8 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
 # ── STEP 2: build & install rome ─────────────────────────────────────────────
 $script:stepNo++
 Step "Build & install rome"
-Info "compiling rome v$VERSION (libusb vendored - first build takes a bit)..."
-cargo install --git "https://github.com/$REPO" --tag "v$VERSION" --locked
+Info "compiling rome (libusb vendored - first build takes a bit)..."
+cargo install --git "https://github.com/$REPO" --branch main --locked --force rome
 Write-Host "-> rome installed" -ForegroundColor Cyan
 
 # ── STEP 3: verify ───────────────────────────────────────────────────────────
