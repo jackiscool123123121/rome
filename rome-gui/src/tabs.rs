@@ -85,7 +85,7 @@ impl RomeApp {
             }
             Some(h) => {
                 ui.label(format!(
-                    "v{}  •  {} songs  •  next free block {}",
+                    "v{}  -  {} songs  -  next free block {}",
                     h.version, h.song_count, h.next_free_block
                 ));
             }
@@ -107,10 +107,10 @@ impl RomeApp {
                     let secs = entry.block_count as f64 * 128.0 / 48000.0;
                     ui.weak(format!("{:.0}m{:02.0}s", (secs / 60.0).floor(), secs % 60.0));
                     ui.add_space(8.0);
-                    if row > 0 && ui.small_button("▲").clicked() {
+                    if row > 0 && ui.small_button("Up").clicked() {
                         swap_req = Some((*idx, live[row - 1].0));
                     }
-                    if row + 1 < live.len() && ui.small_button("▼").clicked() {
+                    if row + 1 < live.len() && ui.small_button("Down").clicked() {
                         swap_req = Some((*idx, live[row + 1].0));
                     }
                     if ui.small_button("Remove").clicked() {
@@ -244,10 +244,10 @@ impl RomeApp {
                     ui.label(name);
                     ui.weak(format!("({})", source.label()));
                     ui.add_space(8.0);
-                    if i > 0 && ui.small_button("▲").clicked() {
+                    if i > 0 && ui.small_button("Up").clicked() {
                         swap_req = Some((i, i - 1));
                     }
-                    if i + 1 < self.bundle_items.len() && ui.small_button("▼").clicked() {
+                    if i + 1 < self.bundle_items.len() && ui.small_button("Down").clicked() {
                         swap_req = Some((i, i + 1));
                     }
                     if ui.small_button("Remove").clicked() {
@@ -335,7 +335,7 @@ impl RomeApp {
                         ui.selectable_value(&mut self.flash_port, p.clone(), p);
                     }
                 });
-            if ui.button("⟳").clicked() {
+            if ui.button("Reload").clicked() {
                 self.ports = rome_core::list_serial_ports().unwrap_or_default();
             }
         });

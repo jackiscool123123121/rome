@@ -164,6 +164,16 @@ enum SongCmd {
         #[arg(short, long)]
         port: Option<String>,
     },
+
+    /// Swap two songs' positions in the tracklist by catalog index
+    Swap {
+        #[arg(short, long)]
+        port: Option<String>,
+        /// First catalog index, shown by `rome song list`
+        idx_a: u16,
+        /// Second catalog index
+        idx_b: u16,
+    },
 }
 
 // ── Audio loading + device connect now live in rome-core (shared with the
@@ -304,6 +314,14 @@ fn cmd_song_list(port: Option<&str>) -> Result<()> {
     cmd_info(port)
 }
 
+fn cmd_song_swap(port: Option<&str>, idx_a: u16, idx_b: u16) -> Result<()> {
+    let mut dev = rome_core::open_dev(port)?;
+    dev.ping().context("ping failed")?;
+    dev.song_swap(idx_a, idx_b)?;
+    eprintln!("rome: swapped songs {idx_a} and {idx_b}");
+    Ok(())
+}
+
 fn cmd_codec(port: Option<&str>) -> Result<()> {
     let mut dev = rome_core::open_dev(port)?;
     dev.ping().context("ping failed")?;
@@ -440,6 +458,7 @@ fn main() -> Result<()> {
             }
             SongCmd::Rm   { port, idx } => cmd_song_rm(port.as_deref(), idx),
             SongCmd::List { port }      => cmd_song_list(port.as_deref()),
+            SongCmd::Swap { port, idx_a, idx_b } => cmd_song_swap(port.as_deref(), idx_a, idx_b),
         },
         Cmd::Extcsd { port }       => cmd_extcsd(port.as_deref()),
         Cmd::Codec  { port }       => cmd_codec(port.as_deref()),

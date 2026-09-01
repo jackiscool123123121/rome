@@ -92,7 +92,7 @@ fn upload_one(
         let _ = tx.send(JobMsg::Progress { frac, eta_secs });
         ctx.request_repaint();
     })?;
-    send(JobMsg::Log(format!("\"{name}\" uploaded — catalog index {idx}")));
+    send(JobMsg::Log(format!("\"{name}\" uploaded -- catalog index {idx}")));
     Ok(idx)
 }
 
@@ -134,9 +134,9 @@ pub fn run_job(job: Job, tx: mpsc::Sender<JobMsg>, ctx: egui::Context) {
                     Err(e) => send(JobMsg::Error(format!("{e:#}"))),
                 }
                 send(JobMsg::Log(if had_error {
-                    "queue transfer finished with errors — see log above".to_string()
+                    "queue transfer finished with errors -- see log above".to_string()
                 } else {
-                    format!("queue transfer complete — {total} song(s) uploaded")
+                    format!("queue transfer complete -- {total} song(s) uploaded")
                 }));
             }
             Job::SaveBundle { items, dest } => {
@@ -194,7 +194,7 @@ pub fn run_job(job: Job, tx: mpsc::Sender<JobMsg>, ctx: egui::Context) {
                 })();
                 match result {
                     Ok(()) => send(JobMsg::Log(
-                        "device powering off — press function to wake it into the bootloader"
+                        "device powering off -- press function to wake it into the bootloader"
                             .into(),
                     )),
                     Err(e) => send(JobMsg::Error(format!("{e:#}"))),
@@ -208,7 +208,7 @@ pub fn run_job(job: Job, tx: mpsc::Sender<JobMsg>, ctx: egui::Context) {
                 // logic just for a GUI progress bar. The GUI shows a spinner
                 // instead of a precise percentage for this one operation.
                 match rome_core::flash::run(Some(&port), Some(&firmware), false, false) {
-                    Ok(()) => send(JobMsg::Log("flash complete — device will restart".into())),
+                    Ok(()) => send(JobMsg::Log("flash complete -- device will restart".into())),
                     Err(e) => send(JobMsg::Error(format!("{e:#}"))),
                 }
             }

@@ -163,7 +163,7 @@ impl eframe::App for RomeApp {
                 ui.selectable_value(&mut self.tab, Tab::Flash, "Flash");
                 ui.selectable_value(&mut self.tab, Tab::Diagnostics, "Diagnostics");
                 ui.add_space(16.0);
-                if ui.add_enabled(!self.busy, egui::Button::new("⟳ Refresh")).clicked() {
+                if ui.add_enabled(!self.busy, egui::Button::new("Refresh")).clicked() {
                     self.spawn(Job::Refresh, ctx);
                 }
                 if self.busy {
@@ -175,7 +175,7 @@ impl eframe::App for RomeApp {
         egui::TopBottomPanel::bottom("log").show(ctx, |ui| {
             if self.busy && self.progress > 0.0 {
                 let text = match self.eta_secs {
-                    Some(eta) => format!("{:.0}% • eta {}", self.progress * 100.0, jobs::format_eta(eta)),
+                    Some(eta) => format!("{:.0}% - eta {}", self.progress * 100.0, jobs::format_eta(eta)),
                     None => format!("{:.0}%", self.progress * 100.0),
                 };
                 ui.add(egui::ProgressBar::new(self.progress).text(text));
