@@ -4,6 +4,14 @@ use std::collections::VecDeque;
 use std::time::Duration;
 use rusb::{Direction, TransferType, UsbContext};
 
+/// See DeviceConn::battery(). Percent is an approximation -- see marisko's
+/// battery.c for the calibration caveat.
+pub struct BatteryStatus {
+    pub percent: Option<u8>,
+    pub charging: bool,
+    pub usb_present: bool,
+}
+
 pub const CMD_PING: u8         = 0x01;
 pub const CMD_DISK_INFO: u8    = 0x02;
 pub const CMD_DISK_FORMAT: u8  = 0x03;
@@ -21,6 +29,7 @@ pub const CMD_WRITE_STRESS: u8    = 0x0E;
 pub const CMD_AUDIO_DIAG: u8      = 0x0F;
 pub const CMD_POWER_OFF: u8       = 0x10;
 pub const CMD_SONG_SWAP: u8       = 0x11;
+pub const CMD_BATTERY: u8         = 0x12;
 
 const STATUS_OK: u8  = 0x00;
 const STATUS_ERR: u8 = 0xFF;
@@ -328,6 +337,22 @@ impl DeviceConn {
         payload[2..4].copy_from_slice(&idx_b.to_le_bytes());
         self.cmd(CMD_SONG_SWAP, &payload)?;
         Ok(())
+    }
+
+    /// Battery status: charge percent (0..100, None if the device's ADC read
+    /// failed), whether it's currently charging, and whether USB power is
+    /// present. Percent is an approximation -- see marisko's battery.c for
+    /// the calibration caveat.
+    pub fn battery(&mut self) -> Result<BatteryStatus> {
+        let data = self.cmd(CMD_BATTERY, &[])?;
+        if data.len() < 3 {
+            bail!("battery: short response ({} bytes)", data.len());
+        }
+        Ok(BatteryStatus {
+            percent: if data[0] == 0xFF { None } else { Some(data[0]) },
+            charging: data[1] != 0,
+            usb_present: data[2] != 0,
+        })
     }
 
     /// Read catalog (4096 bytes = 8 × 512-byte catalog blocks).

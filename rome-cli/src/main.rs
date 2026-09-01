@@ -227,6 +227,19 @@ fn cmd_info(port: Option<&str>) -> Result<()> {
     println!("Disk: v{}  songs: {}  next free block: {}{storage_note}",
         hdr.version, hdr.song_count, hdr.next_free_block);
 
+    match dev.battery() {
+        Ok(b) => {
+            let pct = b.percent.map(|p| format!("{p}%")).unwrap_or_else(|| "unknown".into());
+            let state = match (b.usb_present, b.charging) {
+                (true, true)  => "charging",
+                (true, false) => "USB connected, not charging",
+                (false, _)    => "on battery",
+            };
+            println!("Battery: {pct} ({state})");
+        }
+        Err(e) => println!("Battery: unavailable ({e:#})"),
+    }
+
     if hdr.song_count == 0 {
         println!("Songs: (none)");
         return Ok(());
