@@ -216,7 +216,15 @@ fn cmd_info(port: Option<&str>) -> Result<()> {
         return Ok(());
     }
 
-    println!("Disk: v{}  songs: {}  next free block: {}",
+    let used_gb = hdr.next_free_block as f64 * 512.0 / 1e9;
+    let storage_note = match dev.extcsd_dump() {
+        Ok(e) => {
+            let sec_count = u32::from_le_bytes([e[212], e[213], e[214], e[215]]);
+            format!("  ({:.1}GB / {:.1}GB used)", used_gb, sec_count as f64 * 512.0 / 1e9)
+        }
+        Err(_) => format!("  ({used_gb:.1}GB used)"),
+    };
+    println!("Disk: v{}  songs: {}  next free block: {}{storage_note}",
         hdr.version, hdr.song_count, hdr.next_free_block);
 
     if hdr.song_count == 0 {
