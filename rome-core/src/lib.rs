@@ -339,11 +339,27 @@ pub fn relaunch_elevated_macos() -> Result<bool> {
     // Quote for a single AppleScript string literal: backslash-escape `\` and `"`.
     let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
     let quoted = esc(&exe_path);
-    // `nohup ... &` detaches the root copy so the password sheet never waits on
-    // us; stdout/stderr to /dev/null so no random root-owned strays.
+
+    // Launched from a bundled .app? Then relaunch THE BUNDLE via `open`, not
+    // the raw Mach-O. `open` hands off to LaunchServices: it fully detaches
+    // from the shell AND launches into the user's Aqua/window-server session
+    // (a root `nohup <raw-binary> &` from `do shell script` gets torn down
+    // when osascript exits and fails to open a window — never a visible app).
+    let in_app = exe_path.contains("/Contents/MacOS/");
+    let launch_cmd: String = if in_app {
+        let app = exe.ancestors().nth(2)   // MacOS/.. -> Contents/.. -> <App>.app
+            .unwrap_or_else(|| std::path::Path::new("/Applications/RomeGUI.app"));
+        format!("open -n '{}' &", esc(&app.to_string_lossy()))
+    } else {
+        // Bare `cargo install`'d binary: detach with nohup. Unlike `open`,
+        // this stays in the root session, but a non-bundled CLI has no window
+        // to lose so it's the best we can do.
+        format!("nohup '{}' >/dev/null 2>&1 &", quoted)
+    };
+
     let script = format!(
-        "do shell script \"nohup '{}' >/dev/null 2>&1 &\" with administrator privileges",
-        quoted
+        "do shell script \"{}\" with administrator privileges",
+        esc(&launch_cmd)
     );
     let status = std::process::Command::new("osascript")
         .arg("-e")
