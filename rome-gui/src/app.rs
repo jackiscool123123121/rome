@@ -117,8 +117,34 @@ impl RomeApp {
                 }
                 JobMsg::Diagnostics(s) => self.diagnostics_text = s,
                 JobMsg::Error(e) => {
-                    self.log = format!("error: {e}");
                     self.busy = false;
+                    // macOS: raw-USB access to the SP-1's CDC interface needs
+                    // admin (Apple's driver owns it). Offer a one-time elevate
+                    // that relaunches the app under sudo — no terminal needed.
+                    if std::env::consts::OS == "macos"
+                        && e.contains("PERMISSION DENIED")
+                    {
+                        self.log = "macOS USB permission — requesting administrator \
+                                    privileges to relaunch rome elevated…".to_string();
+                        match rome_core::relaunch_elevated_macos() {
+                            Ok(true) => {
+                                // Root copy is launching in the background; close
+                                // this non-privileged instance so only it remains.
+                                self.log += " relaunched; closing this copy.";
+                                std::process::exit(0);
+                            }
+                            Ok(false) => {
+                                self.log = "Administrator access was declined — \
+                                            run rome from a privileged terminal to connect."
+                                    .to_string();
+                            }
+                            Err(rel) => {
+                                self.log = format!("error: {e}\ncould not elevate: {rel:#}");
+                            }
+                        }
+                    } else {
+                        self.log = format!("error: {e}");
+                    }
                 }
                 JobMsg::Done => self.busy = false,
             }

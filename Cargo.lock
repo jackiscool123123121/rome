@@ -2905,7 +2905,7 @@ dependencies = [
 
 [[package]]
 name = "rome"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2916,7 +2916,7 @@ dependencies = [
 
 [[package]]
 name = "rome-core"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "indicatif",
@@ -2927,7 +2927,7 @@ dependencies = [
 
 [[package]]
 name = "rome-gui"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "eframe",

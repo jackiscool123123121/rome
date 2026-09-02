@@ -109,11 +109,23 @@ impl DeviceConn {
             let (iface, ep_in, ep_out) =
                 found.ok_or_else(|| anyhow!("SP-1 has no CDC-data bulk interface"))?;
 
-            let mut handle = dev.open().context(
+            let handle = dev.open().context(
                 "open SP-1 USB device (permission denied? add a udev rule for \
                  2fe3:0101 or run with sudo)")?;
             handle.set_auto_detach_kernel_driver(true).ok();
-            handle.claim_interface(iface).context("claim CDC-data interface")?;
+            // On macOS the kernel's Apple CDC driver owns the interface, so the
+            // claim needs admin. Surface that distinctly (not as a generic
+            // "claim CDC-data interface") so the GUI can offer to relaunch
+            // elevated. This marker string is matched by rome-gui.
+            if let Err(e) = handle.claim_interface(iface) {
+                if matches!(e, rusb::Error::Access)
+                    && std::env::consts::OS == "macos"
+                {
+                    bail!("SP-1 USB: PERMISSION DENIED — the Apple driver owns the \
+                           CDC interface; relaunch rome with administrator privileges");
+                }
+                return Err(anyhow!("claim CDC-data interface: {e}"));
+            }
             eprintln!("rome: found SP-1 (USB {:04x}:{:04x}, bulk in 0x{:02x}/out 0x{:02x})",
                       DEVICE_VID, DEVICE_PID, ep_in, ep_out);
             return Ok(Self {

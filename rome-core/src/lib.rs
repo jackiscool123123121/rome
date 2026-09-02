@@ -323,3 +323,34 @@ pub fn read_song_stems(
         (channels[stem * 2].clone(), channels[stem * 2 + 1].clone())
     }))
 }
+
+/// macOS-only: when raw-USB access to the SP-1's CDC interface needs admin
+/// (Apple's CDC driver owns it), relaunch this same executable elevated.
+/// Pops the standard macOS administrator password sheet via `osascript` and
+/// launches a background root copy of the app. Returns Ok when the elevated
+/// relaunch was kicked off (or the user cancelled), Err if osascript failed.
+///
+/// The original instance should exit after this so only the elevated copy
+/// remains — the caller decides based on the returned `launched` bool.
+#[cfg(target_os = "macos")]
+pub fn relaunch_elevated_macos() -> Result<bool> {
+    let exe = std::env::current_exe()?;
+    let exe_path = exe.to_string_lossy();
+    // Quote for a single AppleScript string literal: backslash-escape `\` and `"`.
+    let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+    let quoted = esc(&exe_path);
+    // `nohup ... &` detaches the root copy so the password sheet never waits on
+    // us; stdout/stderr to /dev/null so no random root-owned strays.
+    let script = format!(
+        "do shell script \"nohup '{}' >/dev/null 2>&1 &\" with administrator privileges",
+        quoted
+    );
+    let status = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(&script)
+        .status()
+        .context("osascript failed to run the admin elevation prompt")?;
+    // osascript exits 1 when the user cancels the password sheet; 0 otherwise
+    // (including when they typed the password and the relaunch was kicked off).
+    Ok(status.success())
+}
