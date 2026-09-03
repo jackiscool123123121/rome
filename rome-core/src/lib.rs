@@ -324,49 +324,13 @@ pub fn read_song_stems(
     }))
 }
 
-/// macOS-only: when raw-USB access to the SP-1's CDC interface needs admin
-/// (Apple's CDC driver owns it), relaunch this same executable elevated.
-/// Pops the standard macOS administrator password sheet via `osascript` and
-/// launches a background root copy of the app. Returns Ok when the elevated
-/// relaunch was kicked off (or the user cancelled), Err if osascript failed.
-///
-/// The original instance should exit after this so only the elevated copy
-/// remains — the caller decides based on the returned `launched` bool.
-#[cfg(target_os = "macos")]
-pub fn relaunch_elevated_macos() -> Result<bool> {
-    let exe = std::env::current_exe()?;
-    let exe_path = exe.to_string_lossy();
-    // Quote for a single AppleScript string literal: backslash-escape `\` and `"`.
-    let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
-    let quoted = esc(&exe_path);
-
-    // Launched from a bundled .app? Then relaunch THE BUNDLE via `open`, not
-    // the raw Mach-O. `open` hands off to LaunchServices: it fully detaches
-    // from the shell AND launches into the user's Aqua/window-server session
-    // (a root `nohup <raw-binary> &` from `do shell script` gets torn down
-    // when osascript exits and fails to open a window — never a visible app).
-    let in_app = exe_path.contains("/Contents/MacOS/");
-    let launch_cmd: String = if in_app {
-        let app = exe.ancestors().nth(2)   // MacOS/.. -> Contents/.. -> <App>.app
-            .unwrap_or_else(|| std::path::Path::new("/Applications/RomeGUI.app"));
-        format!("open -n '{}' &", esc(&app.to_string_lossy()))
-    } else {
-        // Bare `cargo install`'d binary: detach with nohup. Unlike `open`,
-        // this stays in the root session, but a non-bundled CLI has no window
-        // to lose so it's the best we can do.
-        format!("nohup '{}' >/dev/null 2>&1 &", quoted)
-    };
-
-    let script = format!(
-        "do shell script \"{}\" with administrator privileges",
-        esc(&launch_cmd)
-    );
-    let status = std::process::Command::new("osascript")
-        .arg("-e")
-        .arg(&script)
-        .status()
-        .context("osascript failed to run the admin elevation prompt")?;
-    // osascript exits 1 when the user cancels the password sheet; 0 otherwise
-    // (including when they typed the password and the relaunch was kicked off).
-    Ok(status.success())
-}
+// NOTE: there used to be a relaunch_elevated_macos() here that tried to fix
+// a stuck USB claim by relaunching the GUI under `osascript ... with
+// administrator privileges`. Removed: macOS's WindowServer refuses a root
+// process a connection to the logged-in user's display session, so a
+// relaunch-as-root GUI app can never show a window -- it silently launched
+// an invisible root process and did nothing visible, every time. The actual
+// fix (retrying the transient claim, since Apple's CDC driver just needs a
+// moment to let go) lives in proto.rs's open_dev(). See that function's
+// comment for what still requires a Terminal + sudo (the CLI has no window
+// to lose, so elevation genuinely works there).

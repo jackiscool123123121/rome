@@ -113,16 +113,36 @@ impl DeviceConn {
                 "open SP-1 USB device (permission denied? add a udev rule for \
                  2fe3:0101 or run with sudo)")?;
             handle.set_auto_detach_kernel_driver(true).ok();
-            // On macOS the kernel's Apple CDC driver owns the interface, so the
-            // claim needs admin. Surface that distinctly (not as a generic
-            // "claim CDC-data interface") so the GUI can offer to relaunch
-            // elevated. This marker string is matched by rome-gui.
-            if let Err(e) = handle.claim_interface(iface) {
-                if matches!(e, rusb::Error::Access)
-                    && std::env::consts::OS == "macos"
-                {
-                    bail!("SP-1 USB: PERMISSION DENIED — the Apple driver owns the \
-                           CDC interface; relaunch rome with administrator privileges");
+            // On macOS, Apple's own CDC driver auto-attaches to this interface
+            // the moment the device enumerates, and doesn't always let go
+            // immediately -- especially right after a previous connection
+            // just closed (its own detach hasn't settled yet). That's a race,
+            // not a real permission wall: retry with backoff instead of
+            // failing on the first Access error, which is what this has
+            // actually been observed to be in practice (the same claim
+            // succeeding a moment later with no other change).
+            //
+            // A GUI app CANNOT fix a genuine claim failure by relaunching
+            // itself elevated: macOS's WindowServer refuses a root process a
+            // connection to the logged-in user's display session, so a
+            // relaunch-as-root app never shows a window at all -- it was
+            // tried here before and silently failed for exactly that reason.
+            // If retrying doesn't clear it, the only things that actually
+            // work are unplug/replug (forces the Apple driver to fully
+            // release it) or running `rome` from a Terminal with sudo (a
+            // terminal process has no window to lose, so elevation works
+            // there unlike in the GUI).
+            let mut claim = handle.claim_interface(iface);
+            for _ in 0..5 {
+                if claim.is_ok() { break; }
+                std::thread::sleep(Duration::from_millis(150));
+                claim = handle.claim_interface(iface);
+            }
+            if let Err(e) = claim {
+                if matches!(e, rusb::Error::Access) && std::env::consts::OS == "macos" {
+                    bail!("SP-1 USB: the Apple CDC driver still holds this interface after \
+                           retrying. Unplug/replug the SP-1, or run `rome` from a Terminal \
+                           with sudo (sudo works there; it can't work for the desktop app).");
                 }
                 return Err(anyhow!("claim CDC-data interface: {e}"));
             }
