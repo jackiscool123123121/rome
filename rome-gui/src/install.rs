@@ -5,7 +5,9 @@
 //! straight out of `target/debug` has no sibling CLI binary or .app bundle
 //! to work with, so everything here quietly does nothing in that case.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+#[cfg(target_os = "macos")]
+use std::path::Path;
 
 /// True if this looks like a first run: no marker file recording a prior
 /// CLI install exists yet.

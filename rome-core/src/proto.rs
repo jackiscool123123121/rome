@@ -122,16 +122,10 @@ impl DeviceConn {
             // actually been observed to be in practice (the same claim
             // succeeding a moment later with no other change).
             //
-            // A GUI app CANNOT fix a genuine claim failure by relaunching
-            // itself elevated: macOS's WindowServer refuses a root process a
-            // connection to the logged-in user's display session, so a
-            // relaunch-as-root app never shows a window at all -- it was
-            // tried here before and silently failed for exactly that reason.
-            // If retrying doesn't clear it, the only things that actually
-            // work are unplug/replug (forces the Apple driver to fully
-            // release it) or running `rome` from a Terminal with sudo (a
-            // terminal process has no window to lose, so elevation works
-            // there unlike in the GUI).
+            // If retrying doesn't clear it, the marker string below is
+            // matched by rome-gui (macOS-only, compile-gated) so it can
+            // offer to relaunch elevated. Unplug/replug, or `rome` from a
+            // Terminal with sudo, also work.
             let mut claim = handle.claim_interface(iface);
             for _ in 0..5 {
                 if claim.is_ok() { break; }
@@ -140,9 +134,8 @@ impl DeviceConn {
             }
             if let Err(e) = claim {
                 if matches!(e, rusb::Error::Access) && std::env::consts::OS == "macos" {
-                    bail!("SP-1 USB: the Apple CDC driver still holds this interface after \
-                           retrying. Unplug/replug the SP-1, or run `rome` from a Terminal \
-                           with sudo (sudo works there; it can't work for the desktop app).");
+                    bail!("SP-1 USB: PERMISSION DENIED — the Apple driver owns the \
+                           CDC interface; relaunch rome with administrator privileges");
                 }
                 return Err(anyhow!("claim CDC-data interface: {e}"));
             }
