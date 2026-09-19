@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SP-1 stem player: VID 0x2FE3 = 12259, PID 0x0101 = 257 (see jack-marisko/jack-rome
+     prj.conf / rome-core proto.rs for the authoritative values). -->
+<resources>
+    <usb-device vendor-id="12259" product-id="257" />
+</resources>

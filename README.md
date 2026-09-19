@@ -113,6 +113,21 @@ cargo build --release
 requires a Rust toolchain; `libusb` is vendored (compiled from source) so no
 system dependency is needed. (plain `cargo install --path .` works too.)
 
+## android
+
+[`rome-android/`](rome-android/) is a Kotlin/Compose companion app (USB-OTG,
+not a rebuild of `rome-core`) for battery status and song upload from a
+phone. battery is a straight port of the same wire protocol above, live-
+verified against real hardware. song upload's opcodes/payload layout and its
+IMA-ADPCM encoding were extracted by disassembling this repo's own compiled
+`rome` binary rather than guessed, and the whole write path (`song_begin` →
+chunked `song_multiblock` → `song_commit`) was confirmed end-to-end against
+a real device — see [`rome-android/romecore/BRIDGE_TODO.md`](rome-android/romecore/BRIDGE_TODO.md)
+for the full verification trail and what's still assumption rather than
+confirmed fact. build with `./gradlew :app:assembleDebug` from that
+directory (needs a JDK 17+ and the Android SDK; see that directory's own
+README for setup).
+
 ## license
 
 MIT

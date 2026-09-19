@@ -1,0 +1,11 @@
+.gradle/
+build/
+app/build/
+romecore/build/
+local.properties
+.idea/
+*.iml
+.DS_Store
+captures/
+.cxx/
+.claude-flow/

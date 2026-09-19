@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+"""Real, minimal, disposable test upload against the physical SP-1, using the
+EXACT same protocol bytes as RomeProtocol.kt/Adpcm.kt (Android app). This is
+the closest possible validation of the write path without a physical Android
+phone -- same opcodes, same payload framing, same (already round-trip
+tested) IMA-ADPCM encoder, sent over the same USB connection.
+
+Test song: ~0.7s of a 440Hz tone across all 8 channels, 250 blocks (crosses
+the 96-block chunk boundary twice: 96+96+58), named "ZZ_CLAUDE_TEST" so it's
+unambiguous and easy to identify/remove afterward.
+"""
+import math
+import os
+import select
+import struct
+import sys
+import termios
+import time
+
+DEV = "/dev/cu.usbmodem21201"
+
+STEP_TABLE = [
+    7,8,9,10,11,12,13,14,16,17,19,21,23,25,28,31,
+    34,37,41,45,50,55,60,66,73,80,88,97,107,118,130,143,
+    157,173,190,209,230,253,279,307,337,371,408,449,494,544,598,658,
+    724,796,876,963,1060,1166,1282,1411,1552,1707,1878,2066,2272,2499,2749,3024,
+    3327,3660,4026,4428,4871,5358,5894,6484,7132,7845,8630,9493,10442,11487,12635,13899,
+    15289,16818,18500,20350,22385,24623,27086,29794,32767,
+]
+INDEX_TABLE = [-1,-1,-1,-1,2,4,6,8, -1,-1,-1,-1,2,4,6,8]
+
+
+def clamp(v, lo, hi):
+    return max(lo, min(hi, v))
+
+
+def encode_sample(sample, predictor, index):
+    diff = sample - predictor
+    sign = 0
+    if diff < 0:
+        sign = 8
+        diff = -diff
+    step = STEP_TABLE[index]
+    code = 0
+    diffq = step >> 3
+    temp = step
+    if diff >= temp:
+        code |= 4; diff -= temp; diffq += temp
+    temp >>= 1
+    if diff >= temp:
+        code |= 2; diff -= temp; diffq += temp
+    temp >>= 1
+    if diff >= temp:
+        code |= 1; diffq += temp
+    code |= sign
+    predictor = predictor - diffq if sign else predictor + diffq
+    predictor = clamp(predictor, -32768, 32767)
+    index = clamp(index + INDEX_TABLE[code], 0, len(STEP_TABLE) - 1)
+    return code, predictor, index
+
+
+def encode_channel(samples, block_count):
+    """128 samples/block, 2 samples/byte (first sample -> low nibble, second
+    -> high nibble, matching Adpcm.kt / the disassembled byte order), 64
+    bytes/block, no header, continuous predictor/index state."""
+    out = bytearray(block_count * 64)
+    predictor, index = 0, 0
+    total = block_count * 128
+    pending = None
+    out_pos = 0
+    for i in range(total):
+        s = samples[i] if i < len(samples) else 0
+        code, predictor, index = encode_sample(s, predictor, index)
+        if pending is None:
+            pending = code
+        else:
+            out[out_pos] = (pending & 0x0F) | ((code & 0x0F) << 4)
+            out_pos += 1
+            pending = None
+    return bytes(out)
+
+
+def encode_8ch(channels, block_count):
+    per_channel = [encode_channel(ch, block_count) for ch in channels]
+    out = bytearray(block_count * 512)
+    for b in range(block_count):
+        for ch in range(8):
+            out[b*512 + ch*64 : b*512 + ch*64 + 64] = per_channel[ch][b*64 : b*64 + 64]
+    return bytes(out)
+
+
+class Dev:
+    def __init__(self, path):
+        self.f = open(path, "r+b", buffering=0)
+        self.fd = self.f.fileno()
+        attrs = termios.tcgetattr(self.fd)
+        attrs[0] = 0; attrs[1] = 0; attrs[3] = 0
+        termios.tcsetattr(self.fd, termios.TCSANOW, attrs)
+
+    def write(self, data):
+        self.f.write(data)
+        self.f.flush()
+
+    def read_exact(self, n, timeout_s):
+        buf = b""
+        deadline = time.time() + timeout_s
+        while len(buf) < n:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                raise TimeoutError(f"timed out reading {n} bytes (got {len(buf)})")
+            r, _, _ = select.select([self.fd], [], [], remaining)
+            if not r:
+                continue
+            chunk = os.read(self.fd, n - len(buf))
+            buf += chunk
+        return buf
+
+    def request(self, cmd, payload=b"", timeout_s=5):
+        frame = bytes([cmd]) + struct.pack("<I", len(payload)) + payload
+        self.write(frame)
+        header = self.read_exact(5, timeout_s)
+        status = header[0]
+        length = struct.unpack("<I", header[1:5])[0]
+        if status != 0:
+            raise RuntimeError(f"device returned error status for cmd 0x{cmd:02x}")
+        return self.read_exact(length, timeout_s) if length else b""
+
+    def request_raw(self, raw, timeout_s=10):
+        self.write(raw)
+        header = self.read_exact(5, timeout_s)
+        status = header[0]
+        length = struct.unpack("<I", header[1:5])[0]
+        if status != 0:
+            raise RuntimeError("device returned error status (multiblock)")
+        return self.read_exact(length, timeout_s) if length else b""
+
+
+def main():
+    name = "ZZ_CLAUDE_TEST"
+    block_count = 250  # ~0.7s @ 44.1kHz, crosses the 96-block chunk boundary twice
+    sample_rate = 44100
+    n_samples = block_count * 128
+
+    print(f"Building test audio: {block_count} blocks ({n_samples} samples, "
+          f"~{n_samples/sample_rate:.2f}s), name={name!r}")
+    tone = [int(8000 * math.sin(2 * math.pi * 440 * i / sample_rate)) for i in range(n_samples)]
+    channels = [tone] * 8  # same tone on all 8 channels -- fine for a protocol test
+    encoded = encode_8ch(channels, block_count)
+    assert len(encoded) == block_count * 512
+
+    dev = Dev(DEV)
+
+    print("song_begin...")
+    name_bytes = name.encode("ascii")
+    begin_payload = name_bytes + b"\x00" * (24 - len(name_bytes)) + struct.pack("<II", block_count, 0)
+    begin_resp = dev.request(0x04, begin_payload, timeout_s=5)
+    print(f"  song_begin response: {begin_resp.hex()} ({len(begin_resp)} bytes)")
+    if len(begin_resp) < 2:
+        print("FAIL: song_begin response too short")
+        sys.exit(1)
+
+    print("song_multiblock (chunked, 96 blocks/chunk)...")
+    written = 0
+    while written < block_count:
+        chunk_blocks = min(96, block_count - written)
+        chunk_data = encoded[written*512 : (written+chunk_blocks)*512]
+        raw = bytes([0x09]) + struct.pack("<I", 2) + struct.pack("<H", chunk_blocks) + chunk_data
+        resp = dev.request_raw(raw, timeout_s=10)
+        written += chunk_blocks
+        print(f"  chunk of {chunk_blocks} blocks OK ({written}/{block_count} total), resp={resp.hex()}")
+
+    print("song_commit...")
+    commit_resp = dev.request(0x06, timeout_s=5)
+    print(f"  song_commit response: {commit_resp.hex()} ({len(commit_resp)} bytes)")
+
+    print("\nPASS: upload completed without a device-reported error.")
+
+
+if __name__ == "__main__":
+    main()
